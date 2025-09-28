@@ -4,52 +4,63 @@
 #include "hardware/timer.h"
 #include "hardware/adc.h"
 
-#define LED_Y 5
-#define LED_B 9
-#define BTN   28
+typedef struct {
+    uint led_y;
+    uint led_b;
+    uint btn;
+    struct repeating_timer ty;
+    struct repeating_timer tb;
+    struct repeating_timer talarm;
+    bool y_on;
+    bool b_on;
+    bool running;
+} app_t;
 
-static struct repeating_timer t_y;
-static struct repeating_timer t_b;
-static alarm_id_t stop_alarm = 0;
-
-static volatile bool req_start = false;
-static volatile bool blinking = false;
-static bool y_state = false;
-static bool b_state = false;
+static volatile app_t *g_app = NULL;
 
 static bool y_cb(struct repeating_timer *t) {
-    if (!blinking) { gpio_put(LED_Y, 0); return false; }
-    y_state = !y_state;
-    gpio_put(LED_Y, y_state);
+    app_t *a = (app_t *)t->user_data;
+    a->y_on = !a->y_on;
+    gpio_put(a->led_y, a->y_on);
     return true;
 }
 
 static bool b_cb(struct repeating_timer *t) {
-    if (!blinking) { gpio_put(LED_B, 0); return false; }
-    b_state = !b_state;
-    gpio_put(LED_B, b_state);
+    app_t *a = (app_t *)t->user_data;
+    a->b_on = !a->b_on;
+    gpio_put(a->led_b, a->b_on);
     return true;
 }
 
-static int64_t stop_cb(alarm_id_t id, void *user_data) {
-    blinking = false;
-    cancel_repeating_timer(&t_y);
-    cancel_repeating_timer(&t_b);
-    y_state = false;
-    b_state = false;
-    gpio_put(LED_Y, 0);
-    gpio_put(LED_B, 0);
-    stop_alarm = 0;
-    return 0;
+static bool alarm_cb(struct repeating_timer *t) {
+    app_t *a = (app_t *)t->user_data;
+    cancel_repeating_timer(&a->ty);
+    cancel_repeating_timer(&a->tb);
+    a->y_on = false;
+    a->b_on = false;
+    gpio_put(a->led_y, 0);
+    gpio_put(a->led_b, 0);
+    a->running = false;
+    return false;
 }
 
 static void btn_isr(uint gpio, uint32_t events) {
-    (void)gpio; (void)events;
-    req_start = true;
+    app_t *a = (app_t *)g_app;
+    if (!a || gpio != a->btn) return;
+    if (!a->running) {
+        a->running = true;
+        add_repeating_timer_ms(500, y_cb, a, &a->ty);
+        add_repeating_timer_ms(150, b_cb, a, &a->tb);
+        add_repeating_timer_ms(-5000, alarm_cb, a, &a->talarm);
+    }
 }
 
 int main() {
     stdio_init_all();
+
+    const uint LED_Y = 5;
+    const uint LED_B = 9;
+    const uint BTN   = 28;
 
     gpio_init(LED_Y);
     gpio_set_dir(LED_Y, GPIO_OUT);
@@ -62,28 +73,20 @@ int main() {
     gpio_init(BTN);
     gpio_set_dir(BTN, GPIO_IN);
     gpio_pull_up(BTN);
+
+    app_t app = {
+        .led_y = LED_Y,
+        .led_b = LED_B,
+        .btn = BTN,
+        .y_on = false,
+        .b_on = false,
+        .running = false
+    };
+    g_app = &app;
+
     gpio_set_irq_enabled_with_callback(BTN, GPIO_IRQ_EDGE_FALL, true, btn_isr);
 
     while (true) {
-        if (req_start) {
-            req_start = false;
-
-            if (blinking) {
-                if (stop_alarm != 0) cancel_alarm(stop_alarm);
-                cancel_repeating_timer(&t_y);
-                cancel_repeating_timer(&t_b);
-            }
-
-            blinking = true;
-            y_state = true;
-            b_state = true;
-            gpio_put(LED_Y, 1);
-            gpio_put(LED_B, 1);
-
-            add_repeating_timer_ms(500, y_cb, NULL, &t_y);
-            add_repeating_timer_ms(150, b_cb, NULL, &t_b);
-            stop_alarm = add_alarm_in_ms(5000, stop_cb, NULL, true);
-        }
-        tight_loop_contents();
+        __asm volatile("wfi");
     }
 }
