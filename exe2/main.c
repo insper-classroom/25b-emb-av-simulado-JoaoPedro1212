@@ -16,6 +16,7 @@ typedef struct {
     int btn;
     bool y_on;
     bool b_on;
+    bool running;
     struct repeating_timer ty;
     struct repeating_timer tb;
 } app_t;
@@ -40,6 +41,7 @@ static bool alarm_cb(struct repeating_timer *t) {
     cancel_repeating_timer(&a->tb);
     a->y_on = false;
     a->b_on = false;
+    a->running = false;
     gpio_put(a->led_y, 0);
     gpio_put(a->led_b, 0);
     gpio_set_irq_enabled(a->btn, GPIO_IRQ_EDGE_FALL, true);
@@ -69,25 +71,16 @@ int main() {
     gpio_pull_up(BTN);
     gpio_set_irq_enabled_with_callback(BTN, GPIO_IRQ_EDGE_FALL, true, btn_isr);
 
-    app_t app = {.led_y = LED_Y, .led_b = LED_B, .btn = BTN, .y_on = false, .b_on = false};
+    app_t app = {.led_y = LED_Y, .led_b = LED_B, .btn = BTN, .y_on = false, .b_on = false, .running = false};
     struct repeating_timer talarm;
-    bool running = false;
 
     while (true) {
-        if (g_btn_event && !running) {
+        if (g_btn_event && !app.running) {
             add_repeating_timer_ms(500, y_cb, &app, &app.ty);
             add_repeating_timer_ms(150, b_cb, &app, &app.tb);
             add_repeating_timer_ms(-5000, alarm_cb, &app, &talarm);
             g_btn_event = false;
-            running = true;
-        }
-        if (!gpio_is_irq_enabled(BTN, GPIO_IRQ_EDGE_FALL)) {
-            running = true;
-        } else if (!running) {
-            __asm volatile("wfi");
-        }
-        if (!gpio_is_irq_enabled(BTN, GPIO_IRQ_EDGE_FALL)) {
-            __asm volatile("wfi");
+            app.running = true;
         }
     }
 }
