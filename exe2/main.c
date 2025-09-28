@@ -9,28 +9,26 @@ static const int LED_B = 9;
 static const int BTN   = 28;
 
 static volatile bool g_btn_event = false;
+static volatile bool g_stop = false;
 
 static bool y_cb(struct repeating_timer *t) {
-    volatile bool *stop = (volatile bool *)t->user_data;
     static bool on = false;
-    if (*stop) { gpio_put(LED_Y, 0); on = false; return false; }
+    if (g_stop) { gpio_put(LED_Y, 0); on = false; return false; }
     on = !on;
     gpio_put(LED_Y, on);
     return true;
 }
 
 static bool b_cb(struct repeating_timer *t) {
-    volatile bool *stop = (volatile bool *)t->user_data;
     static bool on = false;
-    if (*stop) { gpio_put(LED_B, 0); on = false; return false; }
+    if (g_stop) { gpio_put(LED_B, 0); on = false; return false; }
     on = !on;
     gpio_put(LED_B, on);
     return true;
 }
 
 static bool alarm_cb(struct repeating_timer *t) {
-    volatile bool *stop = (volatile bool *)t->user_data;
-    *stop = true;
+    g_stop = true;
     gpio_put(LED_Y, 0);
     gpio_put(LED_B, 0);
     gpio_set_irq_enabled(BTN, GPIO_IRQ_EDGE_FALL, true);
@@ -61,20 +59,19 @@ int main() {
     gpio_set_irq_enabled_with_callback(BTN, GPIO_IRQ_EDGE_FALL, true, btn_isr);
 
     struct repeating_timer ty, tb, talarm;
-    volatile bool stop = false;
     bool running = false;
 
     while (true) {
         if (g_btn_event && !running) {
-            stop = false;
+            g_stop = false;
             running = true;
-            add_repeating_timer_ms(500, y_cb, (void *)&stop, &ty);
-            add_repeating_timer_ms(150, b_cb, (void *)&stop, &tb);
-            add_repeating_timer_ms(-5000, alarm_cb, (void *)&stop, &talarm);
+            add_repeating_timer_ms(500, y_cb, NULL, &ty);
+            add_repeating_timer_ms(150, b_cb, NULL, &tb);
+            add_repeating_timer_ms(-5000, alarm_cb, NULL, &talarm);
             g_btn_event = false;
         }
         __asm volatile("wfi");
-        if (stop && running) {
+        if (g_stop && running) {
             running = false;
         }
     }
